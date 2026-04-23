@@ -49,5 +49,22 @@ router.post('/change-password', protect, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+// Temporary seed route - remove after first use
+router.get('/seed-now', async (req, res) => {
+  try {
+    const User = require('../models/User');
+    const users = [
+      { name: 'Admin User', email: 'admin@yourcompany.com', password: 'Admin@123', role: 'admin' },
+      { name: 'China Supplier', email: 'china@supplier.com', password: 'China@123', role: 'china_supplier' },
+      { name: 'MD Supplier', email: 'md@supplier.com', password: 'MD@123', role: 'md_supplier' }
+    ];
+    for (const u of users) {
+      const exists = await User.findOne({ email: u.email });
+      if (!exists) await User.create(u);
+    }
+    res.json({ message: 'Users seeded successfully!' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 module.exports = router;
