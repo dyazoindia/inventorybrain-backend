@@ -1,0 +1,83 @@
+const express = require('express');
+const router = express.Router();
+const { protect, authorize } = require('../middleware/auth');
+const PortalPO = require('../models/PortalPO');
+const InventorySnapshot = require('../models/InventorySnapshot');
+
+// GET /api/portal-po?portal=AMZ
+router.get('/', protect, async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.portal)  filter.portal  = req.query.portal.toUpperCase();
+    if (req.query.status)  filter.status  = req.query.status;
+    if (req.query.asin)    filter.asin    = req.query.asin;
+    const pos = await PortalPO.find(filter).populate('shippedBy','name').populate('deliveredBy','name').sort({ createdAt: -1 });
+    // Add pendingQty computed
+    const result = pos.map(p => ({ ...p.toJSON(), pendingQty: Math.max(0, (p.openPOQty||0) - (p.shippedQty||0)) }));
+    res.json({ portalPOs: result, total: result.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST — create/update portal PO (admin or ops)
+router.post('/', protect, authorize('admin', 'operations'), async (req, res) => {
+  try {
+    const { asin, portal, openPOQty, poReference, notes } = req.body;
+    if (!asin || !portal || openPOQty === undefined) return res.status(400).json({ error: 'asin, portal, openPOQty required' });
+
+    const snapshot = await InventorySnapshot.findOne().sort({ createdAt: -1 });
+    let whInv = 0;
+    if (snapshot) { const row = snapshot.rows.find(r => r.asin === asin); if (row) whInv = row.whInv; }
+
+    let ppo = await PortalPO.findOne({ asin, portal, status: { $in: ['open', 'partially_shipped'] } });
+    if (ppo) {
+      ppo.openPOQty = openPOQty;
+      ppo.notes = notes || ppo.notes;
+    } else {
+      const snap = snapshot?.rows.find(r => r.asin === asin) || {};
+      ppo = new PortalPO({ asin, portal, openPOQty, poReference, notes, status: 'open', warehouseInvAtCreation: whInv, ean: snap.ean, sku: snap.sku, title: snap.title, supplier: snap.supplier });
+    }
+    await ppo.save();
+    res.status(201).json({ portalPO: { ...ppo.toJSON(), pendingQty: Math.max(0, ppo.openPOQty - ppo.shippedQty) } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /:id/ship — Ops team enters shipped qty
+router.patch('/:id/ship', protect, authorize('admin', 'operations'), async (req, res) => {
+  try {
+    const ppo = await PortalPO.findById(req.params.id);
+    if (!ppo) return res.status(404).json({ error: 'Portal PO not found' });
+    const { shippedQty } = req.body;
+    ppo.shippedQty = parseInt(shippedQty) || 0;
+    ppo.shippedAt  = new Date();
+    ppo.shippedBy  = req.user._id;
+    ppo.status     = ppo.shippedQty >= ppo.openPOQty ? 'fully_shipped' : 'partially_shipped';
+    await ppo.save();
+    res.json({ portalPO: { ...ppo.toJSON(), pendingQty: Math.max(0, ppo.openPOQty - ppo.shippedQty) } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /:id/deliver — Admin marks delivered
+router.patch('/:id/deliver', protect, authorize('admin'), async (req, res) => {
+  try {
+    const ppo = await PortalPO.findById(req.params.id);
+    if (!ppo) return res.status(404).json({ error: 'Portal PO not found' });
+    ppo.deliveredQty = parseInt(req.body.deliveredQty) || ppo.shippedQty;
+    ppo.deliveredAt  = new Date();
+    ppo.deliveredBy  = req.user._id;
+    ppo.status       = 'delivered';
+    await ppo.save();
+    res.json({ portalPO: { ...ppo.toJSON(), pendingQty: 0 } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /summary — counts per portal
+router.get('/summary', protect, async (req, res) => {
+  try {
+    const summary = await PortalPO.aggregate([
+      { $group: { _id: { portal: '$portal', status: '$status' }, count: { $sum: 1 }, totalOpen: { $sum: '$openPOQty' }, totalShipped: { $sum: '$shippedQty' }, totalPending: { $sum: { $subtract: ['$openPOQty', '$shippedQty'] } } } }
+    ]);
+    res.json({ summary });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+module.exports = router;
