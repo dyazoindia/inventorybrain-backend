@@ -1,0 +1,49 @@
+const mongoose = require('mongoose');
+
+// Platform POs: Amazon/Flipkart/Zepto/Blinkit generate these
+// Operations team tracks shipment, admin marks delivery
+const portalPOSchema = new mongoose.Schema({
+  asin:     { type: String, required: true, index: true },
+  ean:      String,
+  sku:      String,
+  title:    String,
+  portal:   { type: String, enum: ['AMZ', 'FLK', 'ZPT', 'BLK'], required: true, index: true },
+  supplier: String,
+
+  // Open PO = platform generated this demand
+  openPOQty: { type: Number, default: 0 },
+
+  // Ops team enters how much was shipped to platform
+  shippedQty: { type: Number, default: 0 },
+  shippedAt:  Date,
+  shippedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  // pendingQty = openPOQty - shippedQty (computed on read)
+
+  // Admin marks delivered
+  deliveredQty: { type: Number, default: 0 },
+  deliveredAt:  Date,
+  deliveredBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  status: {
+    type: String,
+    enum: ['open', 'partially_shipped', 'fully_shipped', 'delivered'],
+    default: 'open',
+    index: true
+  },
+
+  poReference: String, // Platform PO number if available
+  notes: String,
+  warehouseInvAtCreation: Number
+
+}, { timestamps: true });
+
+// Virtual: pendingQty
+portalPOSchema.virtual('pendingQty').get(function() {
+  return Math.max(0, (this.openPOQty || 0) - (this.shippedQty || 0));
+});
+
+portalPOSchema.set('toJSON', { virtuals: true });
+portalPOSchema.set('toObject', { virtuals: true });
+
+module.exports = mongoose.model('PortalPO', portalPOSchema);
