@@ -59,11 +59,17 @@ function mergeRowWithPO(row, po) {
     ? ((r.whInv||0) + (r.openPO||0) + (r.mfgQty||0) + (r.inTransit||0)) / tDRR
     : null;
 
-  // Recalculate suggestQty — once confirmed, suggest drops
-  var targetDOC = r.supplier === 'CHINA' ? 120 : 60;
+  // Recalculate suggestQty — once supplier confirms, ALWAYS set to 0
+  // This prevents confusion about duplicate ordering
   if (po.status === 'supplier_confirmed' || po.status === 'shipped' || po.status === 'delivered') {
-    if (r.companyDOC !== null && tDRR > 0 && r.companyDOC < targetDOC) {
-      r.suggestQty = Math.max(0, Math.ceil((targetDOC - r.companyDOC) * tDRR));
+    r.suggestQty = 0; // PO already in progress — no more ordering needed
+  }
+
+  // For admin_approved (awaiting supplier confirm), recalculate with new totals
+  if (po.status === 'admin_approved') {
+    var targetDOC2 = r.supplier === 'CHINA' ? 120 : 60;
+    if (r.companyDOC !== null && tDRR > 0 && r.companyDOC < targetDOC2) {
+      r.suggestQty = Math.max(0, Math.ceil((targetDOC2 - r.companyDOC) * tDRR));
     } else {
       r.suggestQty = 0;
     }
