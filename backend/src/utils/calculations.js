@@ -18,6 +18,11 @@ function computeRow(raw) {
   var zptDRR   = g(raw.zptDRR   || raw['ZPT DRR']);
   var blkDRR   = g(raw.blkDRR   || raw['BLK DRR']);
   var openPO   = g(raw.openPO   || raw['Open PO']);
+  // Portal-specific Open PO columns
+  var amzOpenPO = g(raw.amzOpenPO || raw['AMZ Open PO'] || raw['AMZ OpenPO'] || 0);
+  var flkOpenPO = g(raw.flkOpenPO || raw['FLK Open PO'] || raw['FLK OpenPO'] || 0);
+  var zptOpenPO = g(raw.zptOpenPO || raw['ZPT Open PO'] || raw['ZPT OpenPO'] || 0);
+  var blkOpenPO = g(raw.blkOpenPO || raw['BLK Open PO'] || raw['BLK OpenPO'] || 0);
   var mfgQty   = g(raw.mfgQty   || raw['Mfg Qty']);
   var inTransit= g(raw.inTransit|| 0);
 
@@ -45,6 +50,7 @@ function computeRow(raw) {
     whInv: wh, amzInv: amzInv, flkInv: flkInv, zptInv: zptInv, blkInv: blkInv,
     amzDRR: amzDRR, flkDRR: flkDRR, zptDRR: zptDRR, blkDRR: blkDRR,
     openPO: openPO, mfgQty: mfgQty, inTransit: inTransit,
+    amzOpenPO: amzOpenPO, flkOpenPO: flkOpenPO, zptOpenPO: zptOpenPO, blkOpenPO: blkOpenPO,
     totalInv: totalInv, totalDRR: totalDRR, companyDOC: companyDOC, whDOC: whDOC,
     amzDOC: amzDOC, flkDOC: flkDOC, zptDOC: zptDOC, blkDOC: blkDOC,
     suggestQty: suggestQty,
@@ -62,11 +68,17 @@ function getActionType(supplier, whInv, whDOC, companyDOC, openPO, mfgQty, inTra
 
   // Priority 1: Supplier PO already in progress
   if (hasIncoming) return 'supplier_po_inprogress';
-  // Priority 2: Warehouse empty
-  if (whInv === 0) return 'supplier_po_required';
-  // Priority 3: Company DOC below threshold
+
+  // If company DOC is ABOVE threshold → stock sufficient, no PO needed
+  // This prevents Dead Inventory / Overstock from appearing as "PO Required"
+  if (companyDOC !== null && companyDOC >= threshold) return 'no_action';
+
+  // Priority 2: Company DOC below threshold → need to order
   if (companyDOC !== null && companyDOC < threshold) return 'supplier_po_required';
-  // Priority 4: No action needed
+
+  // Priority 3: No DRR data (DRR=0), but warehouse is empty → flag it
+  if (companyDOC === null && whInv === 0) return 'supplier_po_required';
+
   return 'no_action';
 }
 
@@ -149,6 +161,8 @@ function parseExcelRow(raw) {
     amzDRR:      computed.amzDRR, flkDRR: computed.flkDRR, zptDRR: computed.zptDRR,
     blkDRR:      computed.blkDRR,
     openPO:      computed.openPO, mfgQty: computed.mfgQty, inTransit: computed.inTransit,
+    amzOpenPO:   computed.amzOpenPO, flkOpenPO: computed.flkOpenPO,
+    zptOpenPO:   computed.zptOpenPO, blkOpenPO: computed.blkOpenPO,
     totalInv:    computed.totalInv, totalDRR: computed.totalDRR,
     companyDOC:  computed.companyDOC, whDOC: computed.whDOC,
     amzDOC:      computed.amzDOC, flkDOC: computed.flkDOC,
