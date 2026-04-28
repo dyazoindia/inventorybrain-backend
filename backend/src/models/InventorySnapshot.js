@@ -11,6 +11,8 @@ const snapshotRowSchema = new mongoose.Schema({
   amzDRR: { type: Number, default: 0 }, flkDRR: { type: Number, default: 0 },
   zptDRR: { type: Number, default: 0 }, blkDRR: { type: Number, default: 0 },
   openPO: { type: Number, default: 0 }, mfgQty: { type: Number, default: 0 },
+  amzOpenPO: { type: Number, default: 0 }, flkOpenPO: { type: Number, default: 0 },
+  zptOpenPO: { type: Number, default: 0 }, blkOpenPO: { type: Number, default: 0 },
   inTransit: { type: Number, default: 0 },
 
   totalInv: { type: Number, default: 0 }, totalDRR: { type: Number, default: 0 },
