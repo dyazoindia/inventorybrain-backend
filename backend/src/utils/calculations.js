@@ -178,9 +178,9 @@ function parseExcelRow(raw) {
 
 function compareSnapshots(previous, latest) {
   var prevMap = {};
-  previous.rows.forEach(function(r) { prevMap[r.asin] = r; });
+  previous.rows.forEach(function(r) { prevMap[r.asin] = r.toObject ? r.toObject() : r; });
   var latestMap = {};
-  latest.rows.forEach(function(r) { latestMap[r.asin] = r; });
+  latest.rows.forEach(function(r) { latestMap[r.asin] = r.toObject ? r.toObject() : r; });
 
   var results = {
     summary: { totalLatest: latest.rows.length, totalPrevious: previous.rows.length, newSKUs: 0, removedSKUs: 0, riskIncreased: 0, riskDecreased: 0 },
@@ -188,20 +188,62 @@ function compareSnapshots(previous, latest) {
   };
 
   latest.rows.forEach(function(latestRow) {
-    var prev = prevMap[latestRow.asin];
-    if (!prev) { results.newSKUs.push(latestRow); results.summary.newSKUs++; return; }
+    var lr = latestRow.toObject ? latestRow.toObject() : latestRow;
+    var prev = prevMap[lr.asin];
+    if (!prev) { results.newSKUs.push(lr); results.summary.newSKUs++; return; }
+
+    var fields = ['whInv', 'totalInv', 'totalDRR', 'companyDOC', 'whDOC', 'suggestQty'];
     var hasChanges = false;
-    var fields = ['whInv','totalInv','totalDRR','companyDOC','whDOC'];
     fields.forEach(function(f) {
-      var delta = (latestRow[f] || 0) - (prev[f] || 0);
-      if (Math.abs(delta) > 0.01) hasChanges = true;
+      if (Math.abs((lr[f] || 0) - (prev[f] || 0)) > 0.01) hasChanges = true;
     });
-    if (hasChanges) results.changed.push({ asin: latestRow.asin, sku: latestRow.sku, title: latestRow.title });
-    else results.unchanged.push(latestRow.asin);
+
+    if (!hasChanges) { results.unchanged.push(lr.asin); return; }
+
+    // Determine risk direction based on companyDOC change
+    var prevDoc = prev.companyDOC || 0;
+    var currDoc = lr.companyDOC  || 0;
+    var docDelta = currDoc - prevDoc;
+    var riskIncreased = docDelta < -5;  // DOC dropped significantly — more at risk
+    var riskDecreased = docDelta > 5;   // DOC improved — less at risk
+    if (riskIncreased) results.summary.riskIncreased++;
+    if (riskDecreased) results.summary.riskDecreased++;
+
+    results.changed.push({
+      asin:            lr.asin,
+      sku:             lr.sku,
+      title:           lr.title,
+      supplier:        lr.supplier,
+      category:        lr.category,
+      // Current values
+      whInv:           lr.whInv,
+      amzInv:          lr.amzInv,
+      flkInv:          lr.flkInv,
+      totalInv:        lr.totalInv,
+      totalDRR:        lr.totalDRR,
+      companyDOC:      lr.companyDOC,
+      whDOC:           lr.whDOC,
+      suggestQty:      lr.suggestQty,
+      actionType:      lr.actionType,
+      healthStatus:    lr.healthStatus,
+      // Previous values
+      prevWhInv:       prev.whInv,
+      prevAmzInv:      prev.amzInv,
+      prevTotalInv:    prev.totalInv,
+      prevTotalDRR:    prev.totalDRR,
+      prevCompanyDOC:  prev.companyDOC,
+      prevWhDOC:       prev.whDOC,
+      prevSuggestQty:  prev.suggestQty,
+      prevActionType:  prev.actionType,
+      // Risk flags
+      riskIncreased:   riskIncreased,
+      riskDecreased:   riskDecreased
+    });
   });
 
   previous.rows.forEach(function(prevRow) {
-    if (!latestMap[prevRow.asin]) { results.removedSKUs.push(prevRow); results.summary.removedSKUs++; }
+    var pr = prevRow.toObject ? prevRow.toObject() : prevRow;
+    if (!latestMap[pr.asin]) { results.removedSKUs.push(pr); results.summary.removedSKUs++; }
   });
 
   return results;
