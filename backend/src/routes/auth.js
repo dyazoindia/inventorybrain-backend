@@ -6,19 +6,53 @@ const { protect } = require('../middleware/auth');
 
 const signToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE || '7d' });
 
+// Simple in-memory attempt tracker (resets on server restart)
+var loginAttempts = {};
+var MAX_ATTEMPTS = 20;       // allow 20 attempts
+var WINDOW_MS = 5 * 60 * 1000; // per 5 minutes
+
+function checkRateLimit(ip) {
+  var now = Date.now();
+  if (!loginAttempts[ip] || now - loginAttempts[ip].firstAttempt > WINDOW_MS) {
+    loginAttempts[ip] = { count: 1, firstAttempt: now };
+    return false; // not blocked
+  }
+  loginAttempts[ip].count++;
+  return loginAttempts[ip].count > MAX_ATTEMPTS;
+}
+
+function resetAttempts(ip) {
+  delete loginAttempts[ip];
+}
+
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
+    var ip = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+
+    // Check rate limit
+    if (checkRateLimit(ip)) {
+      return res.status(429).json({ error: 'Too many login attempts. Please wait 5 minutes and try again.' });
+    }
+
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
     const user = await User.findOne({ email, isActive: true });
     if (!user || !(await user.comparePassword(password)))
       return res.status(401).json({ error: 'Invalid email or password' });
+
+    // Success — reset attempts
+    resetAttempts(ip);
+
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
+
     const token = signToken(user._id);
     res.json({ token, user: user.toJSON() });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/auth/me
@@ -34,17 +68,22 @@ router.post('/change-password', protect, async (req, res) => {
     user.password = newPassword;
     await user.save();
     res.json({ message: 'Password updated successfully' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// GET /api/auth/seed-now — create initial users (safe: skips if exists)
+// GET /api/auth/seed-now — create initial users
 router.get('/seed-now', async (req, res) => {
   try {
+    // Also reset all login attempt blocks when seeding
+    loginAttempts = {};
+
     const users = [
-      { name: 'Admin User',       email: 'admin@yourcompany.com', password: 'Admin@123', role: 'admin' },
-      { name: 'Operations Team',  email: 'ops@yourcompany.com',   password: 'Ops@123',   role: 'operations' },
-      { name: 'China Supplier',   email: 'china@supplier.com',    password: 'China@123', role: 'china_supplier' },
-      { name: 'MD Supplier',      email: 'md@supplier.com',       password: 'MD@123',    role: 'md_supplier' }
+      { name: 'Admin User',      email: 'admin@yourcompany.com', password: 'Admin@123', role: 'admin' },
+      { name: 'Operations Team', email: 'ops@yourcompany.com',   password: 'Ops@123',   role: 'operations' },
+      { name: 'China Supplier',  email: 'china@supplier.com',    password: 'China@123', role: 'china_supplier' },
+      { name: 'MD Supplier',     email: 'md@supplier.com',       password: 'MD@123',    role: 'md_supplier' }
     ];
     const results = [];
     for (const u of users) {
@@ -52,8 +91,16 @@ router.get('/seed-now', async (req, res) => {
       if (!exists) { await User.create(u); results.push('Created: ' + u.email); }
       else results.push('Exists: ' + u.email);
     }
-    res.json({ message: 'Done!', results });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    res.json({ message: 'Done! Login blocks cleared.', results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/auth/clear-blocks — emergency: clear all login blocks
+router.get('/clear-blocks', async (req, res) => {
+  loginAttempts = {};
+  res.json({ message: 'All login blocks cleared. You can login now.' });
 });
 
 module.exports = router;
